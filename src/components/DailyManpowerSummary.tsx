@@ -134,38 +134,36 @@ export const DailyManpowerSummary: React.FC<DailyManpowerSummaryProps> = ({
     <section className="bg-slate-900/70 backdrop-blur border border-slate-800 rounded-2xl shadow-xl shadow-black/20 overflow-hidden">
       {/* Section header */}
       <div className="p-4 sm:p-5 border-b border-slate-800 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="w-9 h-9 shrink-0 rounded-xl bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-center text-emerald-400">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-center text-emerald-400">
             <MessageSquare className="w-5 h-5" />
           </div>
-          <div className="min-w-0">
+          <div>
             <div className="flex items-center gap-2 flex-wrap">
-              <h2 className="text-sm sm:text-base font-extrabold text-white tracking-tight truncate">
+              <h2 className="text-base font-extrabold text-white tracking-tight">
                 WORK - {formattedDateHeader}
               </h2>
               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 uppercase tracking-widest">
-                WhatsApp
+                WhatsApp Format
               </span>
             </div>
             <p className="text-xs text-slate-400 mt-0.5 flex items-center gap-1.5">
-              <Users className="w-3 h-3 shrink-0" />
-              <span className="truncate">
-                {totalDeployedWorkers} deployed across {sites.length} worksites
-              </span>
+              <Users className="w-3 h-3" />
+              {totalDeployedWorkers} headcount deployed across {sites.length} worksites
             </p>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <div className="flex items-center p-1 bg-slate-950 rounded-xl border border-slate-800 text-xs">
             {(['cards', 'preview'] as const).map((mode) => (
               <button
                 key={mode}
                 onClick={() => setViewMode(mode)}
-                className={`flex-1 px-3 py-2 rounded-lg font-semibold transition-colors ${
+                className={`px-3 py-1.5 rounded-lg font-semibold transition-colors ${
                   viewMode === mode
                     ? 'bg-amber-500 text-slate-950 shadow-sm'
-                    : 'text-slate-400 active:text-slate-200'
+                    : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
                 {mode === 'cards' ? 'Site Boards' : 'Raw Text'}
@@ -173,28 +171,26 @@ export const DailyManpowerSummary: React.FC<DailyManpowerSummaryProps> = ({
             ))}
           </div>
 
-          <div className="grid grid-cols-2 gap-2">
-            <motion.button
-              whileTap={{ scale: 0.97 }}
-              onClick={handleCopyAll}
-              className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold shadow-sm transition-colors ${
-                copiedAll
-                  ? 'bg-emerald-500 text-slate-950'
-                  : 'bg-emerald-600 active:bg-emerald-500 text-white'
-              }`}
-            >
-              {copiedAll ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-              <span>{copiedAll ? 'Copied Master List!' : 'COPY ALL (WhatsApp)'}</span>
-            </motion.button>
+          <motion.button
+            whileTap={{ scale: 0.96 }}
+            onClick={handleCopyAll}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold shadow-sm transition-colors ${
+              copiedAll
+                ? 'bg-emerald-500 text-slate-950'
+                : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+            }`}
+          >
+            {copiedAll ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+            <span>{copiedAll ? 'Copied Master List!' : 'COPY ALL (WhatsApp)'}</span>
+          </motion.button>
 
-            <button
-              onClick={handleOpenWhatsAppShare}
-              className="flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-slate-800 active:bg-slate-700 text-emerald-400 text-xs font-semibold border border-slate-700 transition-colors"
-            >
-              <Share2 className="w-3.5 h-3.5" />
-              <span>WhatsApp</span>
-            </button>
-          </div>
+          <button
+            onClick={handleOpenWhatsAppShare}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-semibold border border-slate-700 transition-colors"
+          >
+            <Share2 className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">WhatsApp</span>
+          </button>
         </div>
       </div>
 
@@ -241,13 +237,13 @@ export const DailyManpowerSummary: React.FC<DailyManpowerSummaryProps> = ({
                   className="bg-slate-950/80 border border-slate-800 hover:border-slate-700 rounded-2xl overflow-hidden flex flex-col shadow-lg shadow-black/20 transition-colors"
                 >
                   {/* Site header */}
-                  <div className="p-3 bg-slate-900/80 border-b border-slate-800 flex items-start justify-between gap-2">
+                  <div className="p-3.5 bg-slate-900/80 border-b border-slate-800 flex items-start justify-between gap-2">
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5 font-bold text-white text-xs sm:text-sm uppercase tracking-wider">
-                        {!isCradle && <span className="text-rose-500 shrink-0">📍</span>}
+                      <div className="flex items-center gap-1.5 font-bold text-white text-xs sm:text-sm uppercase tracking-wider truncate">
+                        {!isCradle && <span className="text-rose-500">📍</span>}
                         <span className="truncate">{site.name}</span>
                       </div>
-                      <div className="text-[11px] sm:text-xs text-slate-400 font-medium mt-0.5 truncate">
+                      <div className="text-xs text-slate-400 font-medium mt-0.5">
                         With <span className="text-amber-300">{effectiveIncharge}</span> /{' '}
                         <span className="font-mono text-slate-300">{effectiveTime}</span>
                       </div>
@@ -256,10 +252,10 @@ export const DailyManpowerSummary: React.FC<DailyManpowerSummaryProps> = ({
                     <div className="flex items-center gap-1 shrink-0">
                       <button
                         onClick={() => handleCopySite(site)}
-                        className={`flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs font-semibold transition-colors ${
+                        className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold transition-colors ${
                           isCopied
                             ? 'bg-emerald-500 text-slate-950 font-bold'
-                            : 'bg-slate-800 active:bg-slate-700 text-amber-400 border border-slate-700'
+                            : 'bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700'
                         }`}
                         title="Copy WhatsApp text for this site"
                       >
@@ -269,8 +265,8 @@ export const DailyManpowerSummary: React.FC<DailyManpowerSummaryProps> = ({
 
                       <button
                         onClick={() => onOpenEditSite(site)}
-                        className="p-1.5 text-slate-500 active:text-amber-400 rounded-lg active:bg-slate-800 transition-colors"
-                        aria-label={`Edit ${site.name}`}
+                        className="p-1 text-slate-500 hover:text-amber-400 rounded-lg hover:bg-slate-800 transition-colors"
+                        title="Edit site details"
                       >
                         <Edit2 className="w-3.5 h-3.5" />
                       </button>
@@ -279,15 +275,16 @@ export const DailyManpowerSummary: React.FC<DailyManpowerSummaryProps> = ({
                         (isDeletingSite ? (
                           <button
                             onClick={() => handleDeleteSiteClick(site.id)}
-                            className="px-2 py-1 bg-rose-600 text-white rounded-full text-[10px] font-bold animate-pulse"
+                            className="px-1.5 py-0.5 bg-rose-600 text-white rounded-full text-[10px] font-bold animate-pulse"
+                            title="Click again to confirm delete"
                           >
                             Delete?
                           </button>
                         ) : (
                           <button
                             onClick={() => handleDeleteSiteClick(site.id)}
-                            className="p-1.5 text-slate-600 active:text-rose-400 rounded-lg active:bg-slate-800 transition-colors"
-                            aria-label={`Delete ${site.name}`}
+                            className="p-1 text-slate-600 hover:text-rose-400 rounded-lg hover:bg-slate-800 transition-colors"
+                            title="Delete site"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -343,7 +340,7 @@ export const DailyManpowerSummary: React.FC<DailyManpowerSummaryProps> = ({
                           </div>
 
                           <div className="flex items-center gap-1.5 shrink-0">
-                            <span className="hidden sm:inline text-[10px] text-slate-500 group-hover:text-slate-400">
+                            <span className="text-[10px] text-slate-500 group-hover:text-slate-400">
                               {w.company}
                             </span>
                             <button
