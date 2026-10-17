@@ -1,14 +1,16 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { motion } from 'motion/react';
+import { RefreshCw, AlertTriangle } from 'lucide-react';
 import {
-  getStoredWorkers,
-  saveStoredWorkers,
-  getStoredSites,
-  saveStoredSites,
-  getStoredAllocationsForDate,
-  saveStoredAllocationsForDate,
-  duplicateAllocations,
-  resetToSeedData,
-} from './services/storage';
+  fetchWorkers,
+  fetchSites,
+  fetchAllocations,
+  upsertAllocation,
+  upsertWorker,
+  upsertSite,
+  deleteWorker,
+  deleteSite,
+} from './services/dataService';
 import { exportToExcel } from './utils/excelHandler';
 import { getTodayUAEDateString, getYesterdayDateString } from './utils/uaeTime';
 import { Worker, Site, SiteAllocation } from './types';
@@ -22,18 +24,18 @@ import { ExcelImportModal } from './components/ExcelImportModal';
 import { Toast } from './components/Toast';
 
 export default function App() {
-  // Current UAE Date & live ticking clock
   const [selectedDate, setSelectedDate] = useState<string>(getTodayUAEDateString());
   const [uaeTime, setUaeTime] = useState<Date>(new Date());
 
-  // Core Data from persistent storage
-  const [workers, setWorkers] = useState<Worker[]>(() => getStoredWorkers());
-  const [sites, setSites] = useState<Site[]>(() => getStoredSites());
-  const [allocations, setAllocations] = useState<Record<string, SiteAllocation>>(() =>
-    getStoredAllocationsForDate(getTodayUAEDateString(), getStoredSites())
-  );
+  const [workers, setWorkers] = useState<Worker[]>([]);
+  const [sites, setSites] = useState<Site[]>([]);
+  const [allocations, setAllocations] = useState<Record<string, SiteAllocation>>({});
 
-  // Modals state
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Modals
   const [isWorkerManageModalOpen, setIsWorkerManageModalOpen] = useState(false);
   const [workerToEdit, setWorkerToEdit] = useState<Worker | null>(null);
   const [isSitesManageModalOpen, setIsSitesManageModalOpen] = useState(false);
@@ -41,145 +43,177 @@ export default function App() {
   const [siteToEdit, setSiteToEdit] = useState<Site | null>(null);
   const [isExcelImportModalOpen, setIsExcelImportModalOpen] = useState(false);
 
-  // Toast notifications
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const showToast = useCallback((msg: string) => setToastMessage(msg), []);
 
-  const showToast = useCallback((msg: string) => {
-    setToastMessage(msg);
-  }, []);
-
-  // UAE Time ticker (1 second)
+  // UAE live clock
   useEffect(() => {
-    const timer = setInterval(() => {
-      setUaeTime(new Date());
-    }, 1000);
+    const timer = setInterval(() => setUaeTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
 
-  // When selectedDate changes, load allocations for that date
+  // Initial load from database
+  const loadAll = useCallback(async () => {
+    setIsLoading(true);
+    setLoadError(null);
+    try {
+      const [w, s] = await Promise.all([fetchWorkers(), fetchSites()]);
+      setWorkers(w);
+      setSites(s);
+      const allocs = await fetchAllocations(getTodayUAEDateString());
+      const map: Record<string, SiteAllocation> = {};
+      s.forEach((site) => {
+        const found = allocs.find((a) => a.site_id === site.id);
+        map[site.id] = found
+          ? { work_date: found.work_date, site_id: found.site_id, foreman_id: found.foreman_id, worker_ids: found.worker_ids || [] }
+          : { work_date: getTodayUAEDateString(), site_id: site.id, foreman_id: null, worker_ids: [] };
+      });
+      setAllocations(map);
+    } catch (err: any) {
+      setLoadError(err.message || 'Failed to load data from database');
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
-    const allocForDate = getStoredAllocationsForDate(selectedDate, sites);
-    setAllocations(allocForDate);
-  }, [selectedDate, sites]);
+    loadAll();
+  }, [loadAll]);
 
-  // Persist workers whenever changed
-  const updateWorkers = useCallback((newWorkers: Worker[]) => {
-    setWorkers(newWorkers);
-    saveStoredWorkers(newWorkers);
-  }, []);
+  // Reload allocations when the selected date changes
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const allocs = await fetchAllocations(selectedDate);
+        if (cancelled) return;
+        setAllocations((prev) => {
+          const map: Record<string, SiteAllocation> = {};
+          sites.forEach((site) => {
+            const found = allocs.find((a) => a.site_id === site.id);
+            map[site.id] = found
+              ? { work_date: found.work_date, site_id: found.site_id, foreman_id: found.foreman_id, worker_ids: found.worker_ids || [] }
+              : { work_date: selectedDate, site_id: site.id, foreman_id: null, worker_ids: [] };
+          });
+          return map;
+        });
+      } catch (err: any) {
+        showToast(`Failed to load allocations: ${err.message}`);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDate]);
 
-  // Persist sites whenever changed
-  const updateSites = useCallback((newSites: Site[]) => {
-    setSites(newSites);
-    saveStoredSites(newSites);
-  }, []);
-
-  // Persist allocations for current date
-  const updateAllocations = useCallback(
-    (newAlloc: Record<string, SiteAllocation>) => {
+  // Persist an allocation map for the current date
+  const persistAllocations = useCallback(
+    async (newAlloc: Record<string, SiteAllocation>) => {
       setAllocations(newAlloc);
-      saveStoredAllocationsForDate(selectedDate, newAlloc);
+      setIsSaving(true);
+      try {
+        const changed = Object.values(newAlloc);
+        await Promise.all(changed.map((a) => upsertAllocation({ ...a, work_date: selectedDate })));
+      } catch (err: any) {
+        showToast(`Failed to save: ${err.message}`);
+      } finally {
+        setIsSaving(false);
+      }
     },
-    [selectedDate]
+    [selectedDate, showToast]
   );
 
-  // Worker lookup map
   const workerMap = useMemo(() => {
     const map = new Map<string, Worker>();
     workers.forEach((w) => map.set(w.id, w));
     return map;
   }, [workers]);
 
-  // Total Deployed & Unassigned Counts
   const { deployedCount, unassignedCount } = useMemo(() => {
     const assignedSet = new Set<string>();
     Object.values(allocations).forEach((alloc) => {
-      alloc?.workerIds?.forEach((id) => assignedSet.add(id));
+      alloc?.worker_ids?.forEach((id) => assignedSet.add(id));
     });
-
     const activeWorkers = workers.filter((w) => w.status === 'active');
     const deployed = activeWorkers.filter((w) => assignedSet.has(w.id)).length;
-    const unassigned = activeWorkers.length - deployed;
-
-    return { deployedCount: deployed, unassignedCount: unassigned };
+    return {
+      deployedCount: deployed,
+      unassignedCount: activeWorkers.length - deployed,
+    };
   }, [allocations, workers]);
 
   // --- 1-CLICK ATTACH WORKER TO SITE ---
   const handleAttachWorkerToSite = useCallback(
     (workerId: string, targetSiteId: string) => {
-      const updated = { ...allocations };
+      const updated: Record<string, SiteAllocation> = {};
 
-      // 1. Remove this worker from all other sites (no duplicates)
-      Object.keys(updated).forEach((sId) => {
-        const curAlloc = updated[sId];
-        if (!curAlloc) return;
-
-        if (curAlloc.workerIds.includes(workerId)) {
-          updated[sId] = {
-            ...curAlloc,
-            workerIds: curAlloc.workerIds.filter((id) => id !== workerId),
-            foremanId: curAlloc.foremanId === workerId ? undefined : curAlloc.foremanId,
+      Object.values(allocations).forEach((alloc) => {
+        if (alloc.worker_ids.includes(workerId)) {
+          updated[alloc.site_id] = {
+            ...alloc,
+            worker_ids: alloc.worker_ids.filter((id) => id !== workerId),
+            foreman_id: alloc.foreman_id === workerId ? null : alloc.foreman_id,
           };
         }
       });
 
-      // 2. Attach to target site
-      const targetAlloc = updated[targetSiteId] || {
-        siteId: targetSiteId,
-        workerIds: [],
-        foremanId: undefined,
+      const target = updated[targetSiteId] || allocations[targetSiteId] || {
+        work_date: selectedDate,
+        site_id: targetSiteId,
+        foreman_id: null,
+        worker_ids: [],
       };
 
-      if (!targetAlloc.workerIds.includes(workerId)) {
+      if (!target.worker_ids.includes(workerId)) {
         updated[targetSiteId] = {
-          ...targetAlloc,
-          workerIds: [...targetAlloc.workerIds, workerId],
+          ...target,
+          worker_ids: [...target.worker_ids, workerId],
         };
       }
 
-      updateAllocations(updated);
+      const merged = { ...allocations, ...updated };
+      persistAllocations(merged);
 
       const worker = workerMap.get(workerId);
       const site = sites.find((s) => s.id === targetSiteId);
       showToast(`Attached ${worker?.name || 'Worker'} to ${site?.name || 'Site'}`);
     },
-    [allocations, updateAllocations, workerMap, sites, showToast]
+    [allocations, persistAllocations, workerMap, sites, selectedDate, showToast]
   );
 
   // --- 1-CLICK DETACH WORKER TO FREE POOL ---
   const handleDetachWorkerToPool = useCallback(
     (workerId: string) => {
-      const updated = { ...allocations };
+      const updated: Record<string, SiteAllocation> = { ...allocations };
+      let changed = false;
 
-      Object.keys(updated).forEach((sId) => {
-        const curAlloc = updated[sId];
-        if (!curAlloc) return;
-
-        if (curAlloc.workerIds.includes(workerId)) {
-          updated[sId] = {
-            ...curAlloc,
-            workerIds: curAlloc.workerIds.filter((id) => id !== workerId),
-            foremanId: curAlloc.foremanId === workerId ? undefined : curAlloc.foremanId,
+      Object.values(updated).forEach((alloc) => {
+        if (alloc.worker_ids.includes(workerId)) {
+          updated[alloc.site_id] = {
+            ...alloc,
+            worker_ids: alloc.worker_ids.filter((id) => id !== workerId),
+            foreman_id: alloc.foreman_id === workerId ? null : alloc.foreman_id,
           };
+          changed = true;
         }
       });
 
-      updateAllocations(updated);
+      if (changed) persistAllocations(updated);
       const worker = workerMap.get(workerId);
       showToast(`Freed ${worker?.name || 'Worker'} to available pool`);
     },
-    [allocations, updateAllocations, workerMap, showToast]
+    [allocations, persistAllocations, workerMap, showToast]
   );
 
-  // --- REMOVE WORKER FROM SPECIFIC SITE ---
   const handleRemoveWorkerFromSite = useCallback(
-    (workerId: string, siteId: string) => {
+    (workerId: string) => {
       handleDetachWorkerToPool(workerId);
     },
     [handleDetachWorkerToPool]
   );
 
-  // --- MASTER SITES ACTIONS (ADD / EDIT / DELETE / REORDER) ---
+  // --- MASTER SITES ACTIONS ---
   const handleOpenAddSite = useCallback(() => {
     setSiteToEdit(null);
     setIsSiteEditModalOpen(true);
@@ -190,69 +224,40 @@ export default function App() {
     setIsSiteEditModalOpen(true);
   }, []);
 
-  const handleSaveSite = useCallback(
-    (siteData: Partial<Site>) => {
-      if (siteData.id) {
-        // Edit existing site
-        const newSites = sites.map((s) => (s.id === siteData.id ? { ...s, ...siteData } : s));
-        updateSites(newSites as Site[]);
-        showToast(`Updated site: ${siteData.name}`);
-      } else {
-        // Add new site
-        const newSite: Site = {
-          id: `site-${Date.now()}`,
-          name: siteData.name || 'NEW WORKSITE',
-          code: siteData.code,
-          inchargeName: siteData.inchargeName || 'Qadeer',
-          reportingTime: siteData.reportingTime || '6:00AM',
-          location: siteData.location || 'Dubai, UAE',
-          targetHeadcount: siteData.targetHeadcount || 6,
-          order: sites.length + 1,
-          notes: siteData.notes,
-        };
-        const newSites = [...sites, newSite];
-        updateSites(newSites);
-
-        const updatedAlloc = {
-          ...allocations,
-          [newSite.id]: {
-            siteId: newSite.id,
-            workerIds: [],
-            foremanId: undefined,
-          },
-        };
-        updateAllocations(updatedAlloc);
-        showToast(`Created new site: ${newSite.name}`);
-      }
+  const handleSiteSaved = useCallback(
+    (saved: Site) => {
+      setSites((prev) => {
+        const exists = prev.some((s) => s.id === saved.id);
+        if (exists) return prev.map((s) => (s.id === saved.id ? saved : s));
+        return [...prev, saved].sort((a, b) => a.sort_order - b.sort_order);
+      });
+      setAllocations((prev) => ({
+        ...prev,
+        [saved.id]: prev[saved.id] || {
+          work_date: selectedDate,
+          site_id: saved.id,
+          foreman_id: null,
+          worker_ids: [],
+        },
+      }));
     },
-    [sites, updateSites, allocations, updateAllocations, showToast]
+    [selectedDate]
   );
 
-  const handleDeleteSite = useCallback(
+  const handleSiteDeleted = useCallback(
     (siteId: string) => {
-      const site = sites.find((s) => s.id === siteId);
-      if (!site) return;
-
-      // Safely detach workers from this site back to free pool
-      const curAlloc = allocations[siteId];
-      if (curAlloc && curAlloc.workerIds.length > 0) {
-        curAlloc.workerIds.forEach((wId) => handleDetachWorkerToPool(wId));
-      }
-
-      const newSites = sites.filter((s) => s.id !== siteId);
-      updateSites(newSites);
-
-      const updatedAlloc = { ...allocations };
-      delete updatedAlloc[siteId];
-      updateAllocations(updatedAlloc);
-
-      showToast(`Deleted site: ${site.name}`);
+      setSites((prev) => prev.filter((s) => s.id !== siteId));
+      setAllocations((prev) => {
+        const next = { ...prev };
+        delete next[siteId];
+        return next;
+      });
     },
-    [sites, updateSites, allocations, updateAllocations, handleDetachWorkerToPool, showToast]
+    []
   );
 
   const handleReorderSites = useCallback(
-    (siteId: string, direction: 'prev' | 'next') => {
+    async (siteId: string, direction: 'prev' | 'next') => {
       const index = sites.findIndex((s) => s.id === siteId);
       if (index === -1) return;
 
@@ -264,110 +269,148 @@ export default function App() {
       newSites[index] = newSites[targetIndex];
       newSites[targetIndex] = temp;
 
-      newSites.forEach((s, idx) => {
-        s.order = idx + 1;
-      });
+      const reordered = newSites.map((s, idx) => ({ ...s, sort_order: idx + 1 }));
+      setSites(reordered);
 
-      updateSites(newSites);
-    },
-    [sites, updateSites]
-  );
-
-  // --- MASTER WORKERS ACTIONS (ADD / EDIT / DELETE) ---
-  const handleSaveWorker = useCallback(
-    (worker: Worker) => {
-      const exists = workers.some((w) => w.id === worker.id);
-      let newWorkers: Worker[];
-      if (exists) {
-        newWorkers = workers.map((w) => (w.id === worker.id ? worker : w));
-        showToast(`Updated worker: ${worker.name}`);
-      } else {
-        newWorkers = [worker, ...workers];
-        showToast(`Added worker: ${worker.name}`);
+      try {
+        await Promise.all(reordered.map((s) => upsertSite(s)));
+      } catch (err: any) {
+        showToast(`Failed to save site order: ${err.message}`);
       }
-      updateWorkers(newWorkers);
     },
-    [workers, updateWorkers, showToast]
+    [sites, showToast]
   );
 
-  const handleDeleteWorker = useCallback(
+  // --- MASTER WORKERS ACTIONS ---
+  const handleWorkerSaved = useCallback((saved: Worker) => {
+    setWorkers((prev) => {
+      const exists = prev.some((w) => w.id === saved.id);
+      if (exists) return prev.map((w) => (w.id === saved.id ? saved : w));
+      return [saved, ...prev];
+    });
+  }, []);
+
+  const handleWorkerDeleted = useCallback(
     (workerId: string) => {
-      handleDetachWorkerToPool(workerId);
-      const newWorkers = workers.filter((w) => w.id !== workerId);
-      updateWorkers(newWorkers);
-      showToast('Worker removed from database');
+      // Detach from any site first
+      const updated: Record<string, SiteAllocation> = { ...allocations };
+      let changed = false;
+      Object.values(updated).forEach((alloc) => {
+        if (alloc.worker_ids.includes(workerId)) {
+          updated[alloc.site_id] = {
+            ...alloc,
+            worker_ids: alloc.worker_ids.filter((id) => id !== workerId),
+            foreman_id: alloc.foreman_id === workerId ? null : alloc.foreman_id,
+          };
+          changed = true;
+        }
+      });
+      if (changed) persistAllocations(updated);
+      setWorkers((prev) => prev.filter((w) => w.id !== workerId));
     },
-    [workers, updateWorkers, handleDetachWorkerToPool, showToast]
+    [allocations, persistAllocations]
   );
 
   // --- EXCEL & DUPLICATE ACTIONS ---
-  const handleImportExcelSuccess = useCallback(
-    (importedWorkers: Worker[], mode: 'replace' | 'append') => {
-      let finalWorkers: Worker[];
-      if (mode === 'replace') {
-        finalWorkers = importedWorkers;
-        const freshAlloc: Record<string, SiteAllocation> = {};
-        sites.forEach((s) => {
-          freshAlloc[s.id] = { siteId: s.id, workerIds: [], foremanId: undefined };
-        });
-        updateAllocations(freshAlloc);
-        showToast(`Replaced database with ${importedWorkers.length} workers from Excel!`);
+  const handleImportFinished = useCallback(
+    (importedWorkers: Worker[], replaced: boolean) => {
+      if (replaced) {
+        // Delete all current workers then add imported
+        (async () => {
+          try {
+            await Promise.all(workers.map((w) => deleteWorker(w.id)));
+            await Promise.all(importedWorkers.map((w) => upsertWorker(w)));
+            setWorkers(importedWorkers);
+          } catch (err: any) {
+            showToast(`Replace import failed: ${err.message}`);
+          }
+        })();
       } else {
         const existingNames = new Set(workers.map((w) => w.name.trim().toLowerCase()));
         const uniqueNew = importedWorkers.filter(
           (w) => !existingNames.has(w.name.trim().toLowerCase())
         );
-        finalWorkers = [...workers, ...uniqueNew];
-        showToast(`Added ${uniqueNew.length} new workers from Excel!`);
+        setWorkers((prev) => [...prev, ...uniqueNew]);
       }
-      updateWorkers(finalWorkers);
     },
-    [workers, updateWorkers, sites, updateAllocations, showToast]
+    [workers, showToast]
   );
 
   const handleExportExcel = useCallback(() => {
-    exportToExcel({
-      workers,
-      sites,
-      allocations,
-      dateStr: selectedDate,
-    });
+    exportToExcel({ workers, sites, allocations, dateStr: selectedDate });
     showToast('Exported workbook to Excel (.xlsx)');
   }, [workers, sites, allocations, selectedDate, showToast]);
 
-  const handleDuplicateYesterday = useCallback(() => {
+  const handleDuplicateYesterday = useCallback(async () => {
     const yesterdayDate = getYesterdayDateString(selectedDate);
     if (
-      !confirm(
+      !window.confirm(
         `Do you want to duplicate allocations from yesterday (${yesterdayDate}) to today (${selectedDate})?`
       )
     ) {
       return;
     }
 
-    const cloned = duplicateAllocations(yesterdayDate, selectedDate, sites);
-    setAllocations(cloned);
-    showToast(`Successfully duplicated allocations from ${yesterdayDate} to ${selectedDate}!`);
-  }, [selectedDate, sites, showToast]);
-
-  const handleResetSeedData = useCallback(() => {
-    if (
-      !confirm(
-        'Reset to default WhatsApp deployment dataset (Shanthi Foundation, HTS, EGE Interior, Cradle Work)?'
-      )
-    ) {
-      return;
+    try {
+      const yesterdayAllocs = await fetchAllocations(yesterdayDate);
+      const cloned: Record<string, SiteAllocation> = {};
+      sites.forEach((site) => {
+        const src = yesterdayAllocs.find((a) => a.site_id === site.id);
+        cloned[site.id] = {
+          work_date: selectedDate,
+          site_id: site.id,
+          foreman_id: src?.foreman_id ?? null,
+          worker_ids: src?.worker_ids ? [...src.worker_ids] : [],
+        };
+      });
+      await persistAllocations(cloned);
+      showToast(`Duplicated allocations from ${yesterdayDate} to ${selectedDate}!`);
+    } catch (err: any) {
+      showToast(`Failed to duplicate: ${err.message}`);
     }
-    const reset = resetToSeedData();
-    setWorkers(reset.workers);
-    setSites(reset.sites);
-    setAllocations(reset.allocations);
-    showToast('Restored default deployment dataset');
-  }, [showToast]);
+  }, [selectedDate, sites, persistAllocations, showToast]);
+
+  const nextWorkerSortOrder = workers.length + 1;
+  const nextSiteSortOrder = sites.length + 1;
+
+  // Loading screen
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <motion.div
+            animate={{ rotate: 360 }}
+            transition={{ repeat: Infinity, duration: 1.1, ease: 'linear' }}
+          >
+            <RefreshCw className="w-8 h-8 text-amber-400" />
+          </motion.div>
+          <p className="text-sm text-slate-400">Loading workforce data...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Error screen
+  if (loadError) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-6">
+        <div className="max-w-md w-full bg-slate-900 border border-rose-800/60 rounded-2xl p-6 text-center">
+          <AlertTriangle className="w-10 h-10 text-rose-400 mx-auto mb-3" />
+          <h1 className="text-lg font-bold text-white mb-1">Could not load data</h1>
+          <p className="text-xs text-slate-400 mb-5">{loadError}</p>
+          <button
+            onClick={loadAll}
+            className="px-5 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-lg text-xs transition-colors"
+          >
+            Try Again
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-amber-500 selection:text-slate-950">
-      {/* Top Header & Metrics Ribbon */}
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col bg-[radial-gradient(ellipse_at_top,rgba(245,158,11,0.06),transparent_55%)]">
       <Header
         selectedDate={selectedDate}
         onDateChange={setSelectedDate}
@@ -377,52 +420,68 @@ export default function App() {
         unassignedCount={unassignedCount}
         sitesCount={sites.length}
         onDuplicateYesterday={handleDuplicateYesterday}
-        onOpenWorkerManage={() => setIsWorkerManageModalOpen(true)}
+        onOpenWorkerManage={() => {
+          setWorkerToEdit(null);
+          setIsWorkerManageModalOpen(true);
+        }}
         onOpenSitesManage={() => setIsSitesManageModalOpen(true)}
         onOpenExcelImport={() => setIsExcelImportModalOpen(true)}
         onExportExcel={handleExportExcel}
-        onResetSeed={handleResetSeedData}
       />
 
-      {/* Main Working Dashboard */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-3 sm:p-5 flex flex-col space-y-6">
-        {/* Full-width 1-Click Worker Site Allocator */}
-        <section>
+        {isSaving && (
+          <div className="fixed top-2 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-800/90 border border-slate-700 text-[11px] text-amber-300 shadow-lg">
+            <RefreshCw className="w-3 h-3 animate-spin" />
+            Saving to database...
+          </div>
+        )}
+
+        <motion.section
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.35, ease: 'easeOut' }}
+        >
           <OneClickWorkerSiteAllocator
             workers={workers}
             sites={sites}
             allocations={allocations}
             onAttachWorkerToSite={handleAttachWorkerToSite}
             onDetachWorkerToPool={handleDetachWorkerToPool}
-            onOpenAddWorker={() => setIsWorkerManageModalOpen(true)}
+            onOpenAddWorker={() => {
+              setWorkerToEdit(null);
+              setIsWorkerManageModalOpen(true);
+            }}
             onOpenEditWorker={(worker) => {
               setWorkerToEdit(worker);
               setIsWorkerManageModalOpen(true);
             }}
-            onDeleteWorker={handleDeleteWorker}
+            onDeleteWorker={handleWorkerDeleted}
             onOpenAddSite={handleOpenAddSite}
             onOpenSitesMaster={() => setIsSitesManageModalOpen(true)}
           />
-        </section>
+        </motion.section>
 
-        {/* Copy Section Moved Below All to the End */}
-        <section id="whatsapp-summary-section">
+        <motion.section
+          id="whatsapp-summary-section"
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.35, delay: 0.1, ease: 'easeOut' }}
+        >
           <DailyManpowerSummary
             sites={sites}
             workers={workers}
             allocations={allocations}
             selectedDate={selectedDate}
-            uaeTime={uaeTime}
             onShowToast={showToast}
             onRemoveWorkerFromSite={handleRemoveWorkerFromSite}
             onOpenEditSite={handleOpenEditSite}
             onOpenAddSite={handleOpenAddSite}
-            onDeleteSite={handleDeleteSite}
+            onDeleteSite={handleSiteDeleted}
           />
-        </section>
+        </motion.section>
       </main>
 
-      {/* Master Modals */}
       <WorkerManageModal
         isOpen={isWorkerManageModalOpen}
         onClose={() => {
@@ -431,8 +490,10 @@ export default function App() {
         }}
         workers={workers}
         workerToEdit={workerToEdit}
-        onSaveWorker={handleSaveWorker}
-        onDeleteWorker={handleDeleteWorker}
+        onWorkerSaved={handleWorkerSaved}
+        onWorkerDeleted={handleWorkerDeleted}
+        onShowToast={showToast}
+        nextSortOrder={nextWorkerSortOrder}
       />
 
       <SitesManageModal
@@ -441,8 +502,9 @@ export default function App() {
         sites={sites}
         onOpenAddSite={handleOpenAddSite}
         onOpenEditSite={handleOpenEditSite}
-        onDeleteSite={handleDeleteSite}
+        onSiteDeleted={handleSiteDeleted}
         onReorderSites={handleReorderSites}
+        onShowToast={showToast}
       />
 
       <SiteEditModal
@@ -452,17 +514,19 @@ export default function App() {
           setSiteToEdit(null);
         }}
         siteToEdit={siteToEdit}
-        onSaveSite={handleSaveSite}
-        onDeleteSite={handleDeleteSite}
+        onSaved={handleSiteSaved}
+        onDeleted={handleSiteDeleted}
+        onShowToast={showToast}
+        nextSortOrder={nextSiteSortOrder}
       />
 
       <ExcelImportModal
         isOpen={isExcelImportModalOpen}
         onClose={() => setIsExcelImportModalOpen(false)}
-        onImportSuccess={handleImportExcelSuccess}
+        onImportFinished={handleImportFinished}
+        onShowToast={showToast}
       />
 
-      {/* Floating Toast Notification */}
       <Toast message={toastMessage} onClose={() => setToastMessage(null)} />
     </div>
   );

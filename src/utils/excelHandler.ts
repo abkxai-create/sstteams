@@ -8,9 +8,6 @@ export interface ParsedExcelResult {
   warnings: string[];
 }
 
-/**
- * Normalizes header keys to standard worker properties.
- */
 function findValue(row: Record<string, any>, possibleKeys: string[]): string {
   const rowKeys = Object.keys(row);
   for (const targetKey of possibleKeys) {
@@ -27,10 +24,6 @@ function findValue(row: Record<string, any>, possibleKeys: string[]): string {
   return '';
 }
 
-/**
- * Parses an Excel / CSV File or ArrayBuffer into workers.
- * Carefully treats missing or inconsistent entries without inventing fake details.
- */
 export async function parseExcelWorkersFile(file: File): Promise<ParsedExcelResult> {
   const data = await file.arrayBuffer();
   const workbook = XLSX.read(data, { type: 'array' });
@@ -43,7 +36,6 @@ export async function parseExcelWorkersFile(file: File): Promise<ParsedExcelResu
     const worksheet = workbook.Sheets[sheetName];
     if (!worksheet) return;
 
-    // Convert sheet to JSON array with header detection
     const rawRows = XLSX.utils.sheet_to_json<Record<string, any>>(worksheet, {
       defval: '',
       blankrows: false,
@@ -51,48 +43,37 @@ export async function parseExcelWorkersFile(file: File): Promise<ParsedExcelResu
 
     totalRowsFound += rawRows.length;
 
-    rawRows.forEach((row, idx) => {
-      // Find worker name
+    rawRows.forEach((row) => {
       const name = findValue(row, [
-        'name',
-        'worker name',
-        'labour name',
-        'labor name',
-        'employee name',
-        'full name',
-        'worker',
-        'person',
+        'name', 'worker name', 'labour name', 'labor name',
+        'employee name', 'full name', 'worker', 'person',
       ]);
 
-      // If no name is found, check if first column has string
       const firstColVal = Object.values(row)[0];
-      const workerName = name || (typeof firstColVal === 'string' && firstColVal.trim().length > 1 ? firstColVal.trim() : '');
+      const workerName =
+        name ||
+        (typeof firstColVal === 'string' && firstColVal.trim().length > 1
+          ? firstColVal.trim()
+          : '');
 
-      if (!workerName || workerName.toLowerCase() === 'total' || workerName.toLowerCase() === 'name') {
-        return; // Skip blank or header/total rows
+      if (
+        !workerName ||
+        workerName.toLowerCase() === 'total' ||
+        workerName.toLowerCase() === 'name'
+      ) {
+        return;
       }
 
-      const designation = findValue(row, [
-        'designation',
-        'designation / trade',
-        'trade',
-        'role',
-        'job title',
-        'category',
-        'skill',
-        'position',
-      ]) || 'Scaffolder';
+      const designation =
+        findValue(row, [
+          'designation', 'designation / trade', 'trade', 'role',
+          'job title', 'category', 'skill', 'position',
+        ]) || 'Scaffolder';
 
       let company = findValue(row, [
-        'company',
-        'company name',
-        'firm',
-        'employer',
-        'source',
-        'subcontractor',
+        'company', 'company name', 'firm', 'employer', 'source', 'subcontractor',
       ]);
 
-      // If company is not on row, infer from sheet name
       if (!company) {
         const lowerSheet = sheetName.toLowerCase();
         if (lowerSheet.includes('sst') && lowerSheet.includes('sky')) {
@@ -110,63 +91,52 @@ export async function parseExcelWorkersFile(file: File): Promise<ParsedExcelResu
         }
       }
 
-      const empCode = findValue(row, [
-        'emp code',
-        'empcode',
-        'emp id',
-        'empid',
-        'code',
-        'id',
-        'badge no',
-        'sr no',
-        'sl no',
-        's.no',
-        'no',
-      ]) || `IMP-${workers.length + 1}`;
+      const empCode =
+        findValue(row, [
+          'emp code', 'empcode', 'emp id', 'empid', 'code', 'id',
+          'badge no', 'sr no', 'sl no', 's.no', 'no',
+        ]) || `IMP-${workers.length + 1}`;
 
       const currentSite = findValue(row, [
-        'current site',
-        'site',
-        'project',
-        'worksite',
-        'location',
-        'assigned site',
+        'current site', 'site', 'project', 'worksite', 'location', 'assigned site',
       ]);
 
       const phone = findValue(row, [
-        'phone',
-        'mobile',
-        'contact',
-        'tel',
-        'whatsapp',
-        'phone number',
+        'phone', 'mobile', 'contact', 'tel', 'whatsapp', 'phone number',
       ]);
 
       const statusRaw = findValue(row, ['status', 'state', 'remarks', 'active']);
-      let status: 'active' | 'inactive' | 'on_leave' = 'active';
+      let status: Worker['status'] = 'active';
       if (statusRaw.toLowerCase().includes('leave') || statusRaw.toLowerCase().includes('vacation')) {
         status = 'on_leave';
-      } else if (statusRaw.toLowerCase().includes('inactive') || statusRaw.toLowerCase().includes('exit') || statusRaw.toLowerCase().includes('cancelled')) {
+      } else if (
+        statusRaw.toLowerCase().includes('inactive') ||
+        statusRaw.toLowerCase().includes('exit') ||
+        statusRaw.toLowerCase().includes('cancelled')
+      ) {
         status = 'inactive';
       }
 
       workers.push({
         id: `imp-${Date.now()}-${workers.length}-${Math.random().toString(36).substring(2, 6)}`,
-        empCode,
+        emp_code: empCode,
         name: workerName,
         designation,
         company,
-        sheetSource: sheetName,
-        currentSite: currentSite || undefined,
-        phone: phone || undefined,
+        sheet_source: sheetName,
+        current_site: currentSite || null,
+        phone: phone || null,
         status,
-        notes: findValue(row, ['notes', 'remarks', 'comment']) || undefined,
+        notes: findValue(row, ['notes', 'remarks', 'comment']) || null,
+        sort_order: 1000 + workers.length,
       });
     });
   });
 
   if (workers.length === 0) {
-    warnings.push('Could not detect any valid worker rows. Please check column headers (Name, Designation, Company).');
+    warnings.push(
+      'Could not detect any valid worker rows. Please check column headers (Name, Designation, Company).'
+    );
   }
 
   return {
@@ -177,9 +147,6 @@ export async function parseExcelWorkersFile(file: File): Promise<ParsedExcelResu
   };
 }
 
-/**
- * Exports current worker database and allocations to an Excel workbook (.xlsx).
- */
 export function exportToExcel(params: {
   workers: Worker[];
   sites: Site[];
@@ -187,6 +154,7 @@ export function exportToExcel(params: {
   dateStr: string;
 }): void {
   const { workers, sites, allocations, dateStr } = params;
+  const workerMap = new Map(workers.map((w) => [w.id, w]));
 
   const workbook = XLSX.utils.book_new();
 
@@ -194,8 +162,8 @@ export function exportToExcel(params: {
   const deploymentRows: any[] = [];
   sites.forEach((site) => {
     const alloc = allocations[site.id];
-    const workerIds = alloc?.workerIds || [];
-    const foremanId = alloc?.foremanId;
+    const workerIds = alloc?.worker_ids || [];
+    const foremanId = alloc?.foreman_id;
 
     if (workerIds.length === 0) {
       deploymentRows.push({
@@ -211,18 +179,17 @@ export function exportToExcel(params: {
       });
     } else {
       workerIds.forEach((wId) => {
-        const worker = workers.find((w) => w.id === wId);
+        const worker = workerMap.get(wId);
         if (!worker) return;
-        const isForeman = wId === foremanId;
         deploymentRows.push({
           'Site Name': site.name,
           'Site Code': site.code || '',
           'Location': site.location || '',
-          'Role on Site': isForeman ? '⭐ Foreman / In-charge' : 'Crew Member',
+          'Role on Site': wId === foremanId ? 'Foreman / In-charge' : 'Crew Member',
           'Worker Name': worker.name,
           'Designation': worker.designation,
           'Company': worker.company,
-          'Employee ID': worker.empCode,
+          'Employee ID': worker.emp_code,
           'Contact': worker.phone || '',
         });
       });
@@ -234,24 +201,23 @@ export function exportToExcel(params: {
 
   // Sheet 2: Master Workers Database
   const workerRows = workers.map((w) => {
-    // Check if assigned today
     let assignedSiteName = 'Unassigned';
     for (const site of sites) {
       const alloc = allocations[site.id];
-      if (alloc?.workerIds?.includes(w.id)) {
+      if (alloc?.worker_ids?.includes(w.id)) {
         assignedSiteName = site.name;
         break;
       }
     }
 
     return {
-      'Emp Code': w.empCode,
+      'Emp Code': w.emp_code,
       'Worker Name': w.name,
       'Designation': w.designation,
       'Company': w.company,
-      'Sheet Source': w.sheetSource,
+      'Sheet Source': w.sheet_source,
       'Status': w.status,
-      'Default/Saved Site': w.currentSite || '',
+      'Default/Saved Site': w.current_site || '',
       'Today Deployment': assignedSiteName,
       'Contact Phone': w.phone || '',
       'Notes': w.notes || '',
@@ -261,6 +227,5 @@ export function exportToExcel(params: {
   const wsWorkers = XLSX.utils.json_to_sheet(workerRows);
   XLSX.utils.book_append_sheet(workbook, wsWorkers, 'All Workers Database');
 
-  // Generate and download file
   XLSX.writeFile(workbook, `Scaffolding_Allocation_${dateStr}.xlsx`);
 }

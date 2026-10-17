@@ -1,28 +1,26 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { motion } from 'motion/react';
 import {
   X,
   Plus,
   Search,
   Edit2,
   Trash2,
-  HardHat,
   Users,
-  Check,
-  UserCheck,
-  UserX,
   Phone,
-  Building,
-  Briefcase,
 } from 'lucide-react';
 import { Worker, WorkerStatus } from '../types';
+import { upsertWorker, deleteWorker } from '../services/dataService';
 
 interface WorkerManageModalProps {
   isOpen: boolean;
   onClose: () => void;
   workers: Worker[];
   workerToEdit?: Worker | null;
-  onSaveWorker: (worker: Worker) => void;
-  onDeleteWorker: (workerId: string) => void;
+  onWorkerSaved: (worker: Worker) => void;
+  onWorkerDeleted: (workerId: string) => void;
+  onShowToast: (msg: string) => void;
+  nextSortOrder: number;
 }
 
 export const WorkerManageModal: React.FC<WorkerManageModalProps> = ({
@@ -30,13 +28,16 @@ export const WorkerManageModal: React.FC<WorkerManageModalProps> = ({
   onClose,
   workers,
   workerToEdit,
-  onSaveWorker,
-  onDeleteWorker,
+  onWorkerSaved,
+  onWorkerDeleted,
+  onShowToast,
+  nextSortOrder,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCompany, setSelectedCompany] = useState<string>('all');
   const [editingWorker, setEditingWorker] = useState<Worker | null>(null);
   const [isCreatingNew, setIsCreatingNew] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   // Form state
   const [formName, setFormName] = useState('');
@@ -44,19 +45,19 @@ export const WorkerManageModal: React.FC<WorkerManageModalProps> = ({
   const [formDesignation, setFormDesignation] = useState('');
   const [formCompany, setFormCompany] = useState('SST');
   const [formCustomCompany, setFormCustomCompany] = useState('');
-  const [formSheetSource, setFormSheetSource] = useState('Sheet 1: SST & M Sky');
+  const [formSheetSource, setFormSheetSource] = useState('Direct Add');
   const [formPhone, setFormPhone] = useState('');
-  const [formDefaultSite, setFormDefaultSite] = useState('');
   const [formStatus, setFormStatus] = useState<WorkerStatus>('active');
   const [formNotes, setFormNotes] = useState('');
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (isOpen && workerToEdit) {
       startEdit(workerToEdit);
-    } else if (isOpen && !workerToEdit && !editingWorker) {
+    } else if (isOpen && !workerToEdit) {
       setIsCreatingNew(false);
       setEditingWorker(null);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, workerToEdit]);
 
   if (!isOpen) return null;
@@ -69,9 +70,8 @@ export const WorkerManageModal: React.FC<WorkerManageModalProps> = ({
     setFormDesignation('Scaffolder Level 1');
     setFormCompany('SST');
     setFormCustomCompany('');
-    setFormSheetSource('Sheet 1: SST & M Sky');
+    setFormSheetSource('Direct Add');
     setFormPhone('');
-    setFormDefaultSite('');
     setFormStatus('active');
     setFormNotes('');
   };
@@ -80,40 +80,60 @@ export const WorkerManageModal: React.FC<WorkerManageModalProps> = ({
     setIsCreatingNew(false);
     setEditingWorker(worker);
     setFormName(worker.name);
-    setFormEmpCode(worker.empCode || '');
+    setFormEmpCode(worker.emp_code || '');
     setFormDesignation(worker.designation || '');
     setFormCompany(worker.company || 'SST');
     setFormCustomCompany('');
-    setFormSheetSource(worker.sheetSource || 'Custom Entry');
+    setFormSheetSource(worker.sheet_source || 'Direct Add');
     setFormPhone(worker.phone || '');
-    setFormDefaultSite(worker.currentSite || '');
     setFormStatus(worker.status || 'active');
     setFormNotes(worker.notes || '');
   };
 
-  const handleFormSubmit = (e: React.FormEvent) => {
+  const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formName.trim()) return;
+    if (!formName.trim() || isSaving) return;
 
     const companyFinal =
       formCompany === 'other' ? formCustomCompany.trim() || 'Outsiders' : formCompany;
 
     const workerToSave: Worker = {
       id: editingWorker ? editingWorker.id : `w-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-      empCode: formEmpCode.trim() || `EMP-${Date.now().toString().slice(-4)}`,
+      emp_code: formEmpCode.trim() || `EMP-${Date.now().toString().slice(-4)}`,
       name: formName.trim(),
       designation: formDesignation.trim() || 'Scaffolder',
       company: companyFinal,
-      sheetSource: formSheetSource,
-      phone: formPhone.trim() || undefined,
-      currentSite: formDefaultSite.trim() || undefined,
+      sheet_source: formSheetSource,
+      phone: formPhone.trim() || null,
       status: formStatus,
-      notes: formNotes.trim() || undefined,
+      notes: formNotes.trim() || null,
+      sort_order: editingWorker ? editingWorker.sort_order : nextSortOrder,
     };
 
-    onSaveWorker(workerToSave);
-    setIsCreatingNew(false);
-    setEditingWorker(null);
+    setIsSaving(true);
+    try {
+      await upsertWorker(workerToSave);
+      onWorkerSaved(workerToSave);
+      onShowToast(editingWorker ? `Updated worker: ${workerToSave.name}` : `Added worker: ${workerToSave.name}`);
+      setIsCreatingNew(false);
+      setEditingWorker(null);
+    } catch (err: any) {
+      onShowToast(`Failed to save worker: ${err.message}`);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleDelete = async (worker: Worker) => {
+    try {
+      await deleteWorker(worker.id);
+      onWorkerDeleted(worker.id);
+      onShowToast(`Removed worker: ${worker.name}`);
+      setIsCreatingNew(false);
+      setEditingWorker(null);
+    } catch (err: any) {
+      onShowToast(`Failed to delete worker: ${err.message}`);
+    }
   };
 
   const filteredWorkers = workers.filter((w) => {
@@ -123,30 +143,33 @@ export const WorkerManageModal: React.FC<WorkerManageModalProps> = ({
         w.name.toLowerCase().includes(q) ||
         w.designation.toLowerCase().includes(q) ||
         w.company.toLowerCase().includes(q) ||
-        w.empCode.toLowerCase().includes(q);
+        w.emp_code.toLowerCase().includes(q);
       if (!match) return false;
     }
-    if (selectedCompany !== 'all' && w.company !== selectedCompany) {
-      return false;
-    }
+    if (selectedCompany !== 'all' && w.company !== selectedCompany) return false;
     return true;
   });
 
   const companies = Array.from(new Set(workers.map((w) => w.company))).sort();
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden text-slate-100">
-        {/* Modal Header */}
-        <div className="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between bg-slate-900">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96, y: 10 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        transition={{ type: 'spring', stiffness: 320, damping: 26 }}
+        className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden"
+      >
+        {/* Header */}
+        <div className="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+            <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-center text-amber-400">
               <Users className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-white">Workforce Management Database</h2>
+              <h2 className="text-base font-bold text-white">Workforce Database</h2>
               <p className="text-xs text-slate-400">
-                {workers.length} Total Workers · SST, Mountain Sky & Subcontractors
+                {workers.length} total workers · SST, Mountain Sky & Subcontractors
               </p>
             </div>
           </div>
@@ -170,14 +193,13 @@ export const WorkerManageModal: React.FC<WorkerManageModalProps> = ({
           </div>
         </div>
 
-        {/* Modal Body: Either Form or Table */}
+        {/* Body */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-6">
           {isCreatingNew || editingWorker ? (
-            /* Add / Edit Form */
             <form onSubmit={handleFormSubmit} className="space-y-4 max-w-2xl mx-auto">
               <div className="flex items-center justify-between pb-3 border-b border-slate-800">
                 <h3 className="font-bold text-sm text-white">
-                  {editingWorker ? `Edit Worker: ${editingWorker.name}` : 'Add New Worker to Database'}
+                  {editingWorker ? `Edit Worker: ${editingWorker.name}` : 'Add New Worker'}
                 </h3>
                 <button
                   type="button"
@@ -200,7 +222,7 @@ export const WorkerManageModal: React.FC<WorkerManageModalProps> = ({
                     value={formName}
                     onChange={(e) => setFormName(e.target.value)}
                     placeholder="e.g. Tariq Mahmood"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-amber-500"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-amber-500 transition"
                   />
                 </div>
 
@@ -211,7 +233,7 @@ export const WorkerManageModal: React.FC<WorkerManageModalProps> = ({
                     value={formEmpCode}
                     onChange={(e) => setFormEmpCode(e.target.value)}
                     placeholder="e.g. SST-014 or MS-102"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-amber-500"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-amber-500 transition"
                   />
                 </div>
 
@@ -223,7 +245,7 @@ export const WorkerManageModal: React.FC<WorkerManageModalProps> = ({
                     value={formDesignation}
                     onChange={(e) => setFormDesignation(e.target.value)}
                     placeholder="e.g. Scaffold Foreman, Scaffolder L2, Helper"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-amber-500"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-amber-500 transition"
                   />
                 </div>
 
@@ -232,7 +254,7 @@ export const WorkerManageModal: React.FC<WorkerManageModalProps> = ({
                   <select
                     value={formCompany}
                     onChange={(e) => setFormCompany(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-amber-500 cursor-pointer"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-amber-500 cursor-pointer [color-scheme:dark]"
                   >
                     <option value="SST">SST (Safe Scaffolding Trading)</option>
                     <option value="Mountain Sky">Mountain Sky Scaffolding</option>
@@ -247,32 +269,35 @@ export const WorkerManageModal: React.FC<WorkerManageModalProps> = ({
                       placeholder="Enter custom company name"
                       value={formCustomCompany}
                       onChange={(e) => setFormCustomCompany(e.target.value)}
-                      className="w-full mt-2 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white text-xs focus:outline-none focus:border-amber-500"
+                      className="w-full mt-2 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white text-xs focus:outline-none focus:border-amber-500 transition"
                     />
                   )}
                 </div>
 
                 <div>
-                  <label className="block text-slate-400 mb-1 font-medium">Excel Sheet Category</label>
+                  <label className="block text-slate-400 mb-1 font-medium">Source Category</label>
                   <select
                     value={formSheetSource}
                     onChange={(e) => setFormSheetSource(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-amber-500"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-amber-500 cursor-pointer [color-scheme:dark]"
                   >
+                    <option value="Direct Add">Direct Office Addition</option>
                     <option value="Sheet 1: SST & M Sky">Sheet 1: SST & M Sky</option>
                     <option value="Sheet 2: Others & Outsiders">Sheet 2: Others & Outsiders</option>
-                    <option value="Direct Add">Direct Office Addition</option>
                   </select>
                 </div>
 
                 <div>
-                  <label className="block text-slate-400 mb-1 font-medium">Contact Phone (UAE Mobile)</label>
+                  <label className="flex items-center gap-1 text-slate-400 mb-1 font-medium">
+                    <Phone className="w-3 h-3" />
+                    <span>Contact Phone (UAE Mobile)</span>
+                  </label>
                   <input
                     type="text"
                     value={formPhone}
                     onChange={(e) => setFormPhone(e.target.value)}
                     placeholder="e.g. +971 50 123 4567"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-amber-500 font-mono"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-amber-500 font-mono transition"
                   />
                 </div>
 
@@ -281,23 +306,12 @@ export const WorkerManageModal: React.FC<WorkerManageModalProps> = ({
                   <select
                     value={formStatus}
                     onChange={(e) => setFormStatus(e.target.value as WorkerStatus)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-amber-500 cursor-pointer"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-amber-500 cursor-pointer [color-scheme:dark]"
                   >
                     <option value="active">Active (Available for Daily Allocation)</option>
                     <option value="on_leave">On Annual Leave / Vacation</option>
                     <option value="inactive">Inactive / Deactivated</option>
                   </select>
-                </div>
-
-                <div>
-                  <label className="block text-slate-400 mb-1 font-medium">Default/Base Site</label>
-                  <input
-                    type="text"
-                    value={formDefaultSite}
-                    onChange={(e) => setFormDefaultSite(e.target.value)}
-                    placeholder="e.g. Burj Crown Tower or Sajja Yard"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-amber-500"
-                  />
                 </div>
 
                 <div className="sm:col-span-2">
@@ -307,7 +321,7 @@ export const WorkerManageModal: React.FC<WorkerManageModalProps> = ({
                     value={formNotes}
                     onChange={(e) => setFormNotes(e.target.value)}
                     placeholder="e.g. CISRS card valid until 2027, height work approved..."
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-amber-500"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-amber-500 transition"
                   />
                 </div>
               </div>
@@ -317,12 +331,8 @@ export const WorkerManageModal: React.FC<WorkerManageModalProps> = ({
                   {editingWorker && (
                     <button
                       type="button"
-                      onClick={() => {
-                        onDeleteWorker(editingWorker.id);
-                        setIsCreatingNew(false);
-                        setEditingWorker(null);
-                      }}
-                      className="px-3 py-2 rounded-lg bg-rose-950/60 hover:bg-rose-900 text-rose-300 border border-rose-800 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                      onClick={() => handleDelete(editingWorker)}
+                      className="px-3 py-2 rounded-lg bg-rose-950/60 hover:bg-rose-900 text-rose-300 border border-rose-800 text-xs font-semibold flex items-center gap-1.5 transition-colors"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                       <span>Delete Worker</span>
@@ -337,39 +347,39 @@ export const WorkerManageModal: React.FC<WorkerManageModalProps> = ({
                       setIsCreatingNew(false);
                       setEditingWorker(null);
                     }}
-                    className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium cursor-pointer"
+                    className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
-                    className="px-5 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold shadow-sm transition-colors cursor-pointer"
+                    disabled={isSaving}
+                    className="px-5 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-slate-950 text-xs font-bold shadow-sm transition-colors"
                   >
-                    {editingWorker ? 'Save Changes' : 'Add Worker'}
+                    {isSaving ? 'Saving...' : editingWorker ? 'Save Changes' : 'Add Worker'}
                   </button>
                 </div>
               </div>
             </form>
           ) : (
-            /* Database Table View */
             <div className="space-y-4">
-              {/* Search & Filters */}
+              {/* Search & filters */}
               <div className="flex flex-col sm:flex-row items-center gap-3">
                 <div className="relative flex-1 w-full">
-                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                  <Search className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" />
                   <input
                     type="text"
-                    placeholder="Search workforce by name, role, company, ID..."
+                    placeholder="Search by name, role, company, ID..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-9 pr-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-9 pr-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 transition"
                   />
                 </div>
 
                 <select
                   value={selectedCompany}
                   onChange={(e) => setSelectedCompany(e.target.value)}
-                  className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-amber-500 w-full sm:w-auto cursor-pointer"
+                  className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-amber-500 w-full sm:w-auto cursor-pointer [color-scheme:dark]"
                 >
                   <option value="all">All Companies ({workers.length})</option>
                   {companies.map((c) => (
@@ -380,52 +390,41 @@ export const WorkerManageModal: React.FC<WorkerManageModalProps> = ({
                 </select>
               </div>
 
-              {/* Workers Table */}
-              <div className="border border-slate-800 rounded-xl overflow-hidden bg-slate-950">
-                <div className="overflow-x-auto">
+              {/* Table */}
+              <div className="border border-slate-800 rounded-xl overflow-hidden bg-slate-950/80">
+                <div className="overflow-x-auto max-h-[420px]">
                   <table className="w-full text-left text-xs">
-                    <thead className="bg-slate-900 border-b border-slate-800 text-slate-400 font-semibold uppercase text-[10px] tracking-wider">
+                    <thead className="bg-slate-900 border-b border-slate-800 text-slate-500 font-semibold uppercase text-[10px] tracking-wider sticky top-0">
                       <tr>
                         <th className="py-2.5 px-3">Emp ID</th>
                         <th className="py-2.5 px-3">Name</th>
                         <th className="py-2.5 px-3">Designation</th>
                         <th className="py-2.5 px-3">Company</th>
-                        <th className="py-2.5 px-3">Sheet Source</th>
                         <th className="py-2.5 px-3">Status</th>
                         <th className="py-2.5 px-3 text-right">Actions</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-800/80">
+                    <tbody className="divide-y divide-slate-800/70">
                       {filteredWorkers.map((worker) => (
-                        <tr
-                          key={worker.id}
-                          className="hover:bg-slate-900/60 transition-colors group"
-                        >
+                        <tr key={worker.id} className="hover:bg-slate-900/60 transition-colors">
                           <td className="py-2.5 px-3 font-mono text-slate-400 text-[11px]">
-                            {worker.empCode}
+                            {worker.emp_code}
                           </td>
-                          <td className="py-2.5 px-3 font-semibold text-white">
-                            {worker.name}
-                          </td>
-                          <td className="py-2.5 px-3 text-slate-300">
-                            {worker.designation}
-                          </td>
+                          <td className="py-2.5 px-3 font-semibold text-white">{worker.name}</td>
+                          <td className="py-2.5 px-3 text-slate-300">{worker.designation}</td>
                           <td className="py-2.5 px-3">
-                            <span className="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-300 text-[10px]">
+                            <span className="px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-slate-300 text-[10px]">
                               {worker.company}
                             </span>
                           </td>
-                          <td className="py-2.5 px-3 text-slate-400 text-[11px]">
-                            {worker.sheetSource}
-                          </td>
                           <td className="py-2.5 px-3">
                             <span
-                              className={`px-2 py-0.5 rounded text-[10px] font-medium ${
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-medium border ${
                                 worker.status === 'active'
-                                  ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
+                                  ? 'bg-emerald-950 text-emerald-400 border-emerald-800'
                                   : worker.status === 'on_leave'
-                                  ? 'bg-amber-950 text-amber-400 border border-amber-800'
-                                  : 'bg-rose-950 text-rose-400 border border-rose-800'
+                                  ? 'bg-amber-950 text-amber-400 border-amber-800'
+                                  : 'bg-rose-950 text-rose-400 border-rose-800'
                               }`}
                             >
                               {worker.status === 'active'
@@ -438,14 +437,14 @@ export const WorkerManageModal: React.FC<WorkerManageModalProps> = ({
                           <td className="py-2.5 px-3 text-right space-x-1">
                             <button
                               onClick={() => startEdit(worker)}
-                              className="p-1 text-slate-400 hover:text-amber-400 rounded hover:bg-slate-800"
+                              className="p-1 text-slate-400 hover:text-amber-400 rounded hover:bg-slate-800 transition-colors"
                               title="Edit worker"
                             >
                               <Edit2 className="w-3.5 h-3.5" />
                             </button>
                             <button
-                              onClick={() => onDeleteWorker(worker.id)}
-                              className="p-1 text-slate-400 hover:text-rose-400 rounded hover:bg-slate-800 transition-colors cursor-pointer"
+                              onClick={() => handleDelete(worker)}
+                              className="p-1 text-slate-400 hover:text-rose-400 rounded hover:bg-slate-800 transition-colors"
                               title="Delete worker"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
@@ -461,8 +460,8 @@ export const WorkerManageModal: React.FC<WorkerManageModalProps> = ({
           )}
         </div>
 
-        {/* Modal Footer */}
-        <div className="p-4 border-t border-slate-800 bg-slate-900/90 flex items-center justify-between text-xs text-slate-400">
+        {/* Footer */}
+        <div className="p-4 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
           <span>{filteredWorkers.length} matching workers</span>
           <button
             onClick={onClose}
@@ -471,7 +470,7 @@ export const WorkerManageModal: React.FC<WorkerManageModalProps> = ({
             Close
           </button>
         </div>
-      </div>
+      </motion.div>
     </div>
   );
 };

@@ -1,4 +1,4 @@
-import { Site, Worker } from '../types';
+import { Site, Worker, SiteAllocation } from '../types';
 
 /**
  * Converts a YYYY-MM-DD date string to DD-MM-YYYY (e.g., 2026-10-10 -> 10-10-2026)
@@ -13,18 +13,13 @@ export function formatDateForWorkHeader(dateStr: string): string {
 }
 
 /**
- * Formats a single site's manpower deployment in the exact format from user's WhatsApp screenshot.
+ * Formats a single site's manpower deployment in the exact format from the WhatsApp screenshot:
  *
- * Example:
  * 📍 SHANTHI FOUNDATION
  * With Qadeer / 6:00AM
  *
  * 1. Yubaraj
  * 2. Samim
- * 3. Mushtaq
- * 4. Ayoub
- * 5. Tajammal
- * 6. Godred
  */
 export function formatSingleSiteWhatsApp(params: {
   site: Site;
@@ -37,7 +32,6 @@ export function formatSingleSiteWhatsApp(params: {
 
   const lines: string[] = [];
 
-  // Site Title
   const siteNameUpper = site.name.trim().toUpperCase();
   const hasEmoji = /[\u{1F300}-\u{1F9FF}]/u.test(siteNameUpper);
   if (hasEmoji) {
@@ -48,16 +42,12 @@ export function formatSingleSiteWhatsApp(params: {
     lines.push(siteNameUpper);
   }
 
-  // "With <Incharge> / <Time>"
-  const effectiveIncharge =
-    site.inchargeName || foremanName || 'Supervisor';
-  const effectiveTime =
-    site.reportingTime || reportingTime || '6:00AM';
+  const effectiveIncharge = site.incharge_name || foremanName || 'Supervisor';
+  const effectiveTime = site.reporting_time || reportingTime || '6:00AM';
 
   lines.push(`With ${effectiveIncharge} / ${effectiveTime}`);
-  lines.push(''); // Blank line
+  lines.push('');
 
-  // Numbered list of workers (First name / display name as requested)
   if (workers.length === 0) {
     lines.push('(No workers assigned)');
   } else {
@@ -70,43 +60,32 @@ export function formatSingleSiteWhatsApp(params: {
 }
 
 /**
- * Formats all active sites into one master WhatsApp deployment message matching user's image:
- *
- * WORK - 10-10-2026
- *
- * 📍 SHANTHI FOUNDATION
- * With Qadeer / 6:00AM
- *
- * 1. Yubaraj
- * 2. Samim
- * ...
+ * Formats all active sites into one master WhatsApp deployment message.
  */
 export function formatMasterWhatsAppDeployment(params: {
   sites: Site[];
-  allocations: Record<string, { foremanId?: string; workerIds: string[] }>;
+  allocations: Record<string, SiteAllocation>;
   workerMap: Map<string, Worker>;
-  dateStr: string; // YYYY-MM-DD
-  headerPrefix?: string; // e.g. "WORK"
+  dateStr: string;
+  headerPrefix?: string;
 }): string {
   const { sites, allocations, workerMap, dateStr, headerPrefix = 'WORK' } = params;
 
   const dateHeader = formatDateForWorkHeader(dateStr);
   const blocks: string[] = [];
 
-  // Top header matching image
   blocks.push(`${headerPrefix} - ${dateHeader}`);
   blocks.push('');
 
   sites.forEach((site) => {
-    const alloc = allocations[site.id] || { workerIds: [] };
-    const siteWorkers = alloc.workerIds
+    const alloc = allocations[site.id];
+    const siteWorkers = (alloc?.worker_ids || [])
       .map((id) => workerMap.get(id))
       .filter((w): w is Worker => Boolean(w));
 
-    // Resolve in-charge name
-    let foremanName = site.inchargeName;
-    if (!foremanName && alloc.foremanId) {
-      foremanName = workerMap.get(alloc.foremanId)?.name;
+    let foremanName = site.incharge_name || undefined;
+    if (!foremanName && alloc?.foreman_id) {
+      foremanName = workerMap.get(alloc.foreman_id)?.name;
     }
 
     const isCradle = site.name.toUpperCase().includes('CRADLE');
@@ -114,12 +93,12 @@ export function formatMasterWhatsAppDeployment(params: {
       site,
       workers: siteWorkers,
       foremanName,
-      reportingTime: site.reportingTime || '6:00AM',
+      reportingTime: site.reporting_time || '6:00AM',
       includePin: !isCradle,
     });
 
     blocks.push(siteText);
-    blocks.push(''); // Extra line between sites
+    blocks.push('');
   });
 
   return blocks.join('\n').trim();

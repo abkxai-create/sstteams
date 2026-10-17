@@ -2,38 +2,33 @@ export type WorkerStatus = 'active' | 'inactive' | 'on_leave';
 
 export interface Worker {
   id: string;
-  empCode: string;
+  emp_code: string;
   name: string;
   designation: string;
   company: string;
-  sheetSource: string; // e.g., "Sheet 1: SST & M Sky" or "Sheet 2: Others & Outsiders"
-  currentSite?: string;
-  phone?: string;
+  sheet_source: string;
+  current_site?: string | null;
+  phone?: string | null;
   status: WorkerStatus;
-  notes?: string;
+  notes?: string | null;
+  sort_order: number;
 }
 
 export interface Site {
   id: string;
   name: string;
-  code?: string;
-  location?: string;
-  inchargeName?: string; // e.g. "Qadeer", "Zubair", "Naeem", "Safdar"
-  reportingTime?: string; // e.g. "6:00AM"
-  targetHeadcount?: number;
-  foremanId?: string; // ID of the assigned foreman worker
-  order: number;
-  notes?: string;
+  code?: string | null;
+  location?: string | null;
+  incharge_name?: string | null;
+  reporting_time?: string | null;
+  target_headcount?: number | null;
+  notes?: string | null;
+  sort_order: number;
 }
 
 export interface SiteAllocation {
-  siteId: string;
-  foremanId?: string;
-  workerIds: string[];
-}
-
-export interface DailyDeployment {
-  date: string; // YYYY-MM-DD
-  allocations: Record<string, SiteAllocation>; // siteId -> SiteAllocation
-  updatedAt: string;
+  work_date: string;
+  site_id: string;
+  foreman_id?: string | null;
+  worker_ids: string[];
 }

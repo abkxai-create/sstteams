@@ -42,3 +42,19 @@
 .animate-fade-in {
   animation: fadeIn 0.15s ease-out forwards;
 }
+
+/* Date input calendar icon visibility on dark background */
+input[type='date']::-webkit-calendar-picker-indicator {
+  filter: invert(0.7);
+  cursor: pointer;
+}
+
+/* Respect reduced-motion preference */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

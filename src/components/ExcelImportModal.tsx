@@ -1,36 +1,38 @@
 import React, { useState, useRef } from 'react';
+import { motion } from 'motion/react';
 import {
   Upload,
   FileSpreadsheet,
   Check,
   AlertCircle,
   X,
-  FileText,
   RefreshCw,
-  Layers,
   ArrowRight,
-  Download,
 } from 'lucide-react';
 import { parseExcelWorkersFile, ParsedExcelResult } from '../utils/excelHandler';
 import { Worker } from '../types';
+import { upsertWorker } from '../services/dataService';
 
 interface ExcelImportModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onImportSuccess: (importedWorkers: Worker[], mode: 'replace' | 'append') => void;
+  onImportFinished: (imported: Worker[], replaced: boolean) => void;
+  onShowToast: (msg: string) => void;
 }
 
 export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
   isOpen,
   onClose,
-  onImportSuccess,
+  onImportFinished,
+  onShowToast,
 }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
   const [parsedData, setParsedData] = useState<ParsedExcelResult | null>(null);
   const [fileName, setFileName] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [importMode, setImportMode] = useState<'replace' | 'append'>('replace');
+  const [importMode, setImportMode] = useState<'replace' | 'append'>('append');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -55,7 +57,6 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
         setParsedData(result);
       }
     } catch (e: any) {
-      console.error('Failed to parse Excel file', e);
       setErrorMsg(`Failed to parse Excel file: ${e?.message || 'Unknown error'}`);
       setParsedData(null);
     } finally {
@@ -63,39 +64,42 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
     }
   };
 
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      handleProcessFile(e.dataTransfer.files[0]);
-    }
-  };
+  const handleConfirmImport = async () => {
+    if (!parsedData || parsedData.workers.length === 0 || isImporting) return;
+    setIsImporting(true);
 
-  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      handleProcessFile(e.target.files[0]);
+    try {
+      for (const worker of parsedData.workers) {
+        await upsertWorker(worker);
+      }
+      onImportFinished(parsedData.workers, importMode === 'replace');
+      onShowToast(`Imported ${parsedData.workers.length} workers from Excel!`);
+      onClose();
+    } catch (err: any) {
+      onShowToast(`Import failed: ${err.message}`);
+    } finally {
+      setIsImporting(false);
     }
-  };
-
-  const handleConfirmImport = () => {
-    if (!parsedData || parsedData.workers.length === 0) return;
-    onImportSuccess(parsedData.workers, importMode);
-    onClose();
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-3xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden text-slate-100">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96, y: 10 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        transition={{ type: 'spring', stiffness: 320, damping: 26 }}
+        className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-3xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden"
+      >
         {/* Header */}
-        <div className="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between bg-slate-900">
+        <div className="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+            <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-center text-emerald-400">
               <FileSpreadsheet className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-white">Import Scaffolding Labours Excel</h2>
+              <h2 className="text-base font-bold text-white">Import Workers from Excel</h2>
               <p className="text-xs text-slate-400">
-                Supports "Labours List - SST, M Sky, Others.xlsx" (all sheets preserved)
+                Multi-sheet workbooks supported (.xlsx, .xls, .csv)
               </p>
             </div>
           </div>
@@ -117,18 +121,28 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
               setIsDragging(true);
             }}
             onDragLeave={() => setIsDragging(false)}
-            onDrop={handleDrop}
+            onDrop={(e) => {
+              e.preventDefault();
+              setIsDragging(false);
+              if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                handleProcessFile(e.dataTransfer.files[0]);
+              }
+            }}
             onClick={() => fileInputRef.current?.click()}
-            className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all ${
+            className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all ${
               isDragging
-                ? 'border-emerald-400 bg-emerald-950/20'
+                ? 'border-emerald-400 bg-emerald-950/20 scale-[1.01]'
                 : 'border-slate-700 hover:border-emerald-500/60 bg-slate-950/60 hover:bg-slate-950'
             }`}
           >
             <input
               type="file"
               ref={fileInputRef}
-              onChange={handleFileInputChange}
+              onChange={(e) => {
+                if (e.target.files && e.target.files[0]) {
+                  handleProcessFile(e.target.files[0]);
+                }
+              }}
               accept=".xlsx,.xls,.csv"
               className="hidden"
             />
@@ -137,15 +151,11 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
             <p className="text-sm font-bold text-white mb-1">
               Click to select or drag and drop your Excel file here
             </p>
-            <p className="text-xs text-slate-400">
-              Labours List - SST, M Sky, Others.xlsx (.xlsx, .xls, .csv)
-            </p>
             <p className="text-[11px] text-slate-500 mt-2">
-              Auto-detects multi-sheet workbooks: Sheet 1 (SST & M Sky) and Sheet 2 (Others / Outsiders)
+              Auto-detects columns: Name, Designation, Company, Emp Code, Phone, Status
             </p>
           </div>
 
-          {/* Loading state */}
           {isLoading && (
             <div className="flex items-center justify-center gap-2 py-4 text-emerald-400 text-xs">
               <RefreshCw className="w-4 h-4 animate-spin" />
@@ -153,7 +163,6 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
             </div>
           )}
 
-          {/* Error Message */}
           {errorMsg && (
             <div className="p-3 rounded-lg bg-rose-950/50 border border-rose-800 text-rose-300 text-xs flex items-center gap-2">
               <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
@@ -161,10 +170,9 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
             </div>
           )}
 
-          {/* Parsed Result Preview */}
           {parsedData && (
             <div className="space-y-4">
-              <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+              <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2">
                 <div className="flex items-center justify-between text-xs">
                   <span className="font-semibold text-white flex items-center gap-1.5">
                     <Check className="w-4 h-4 text-emerald-400" />
@@ -188,35 +196,12 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                 </div>
               </div>
 
-              {/* Import Mode Selector */}
-              <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+              {/* Import mode */}
+              <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2">
                 <label className="text-xs font-semibold text-slate-200 block">
                   Select Import Action:
                 </label>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                  <label
-                    className={`flex items-start gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-colors ${
-                      importMode === 'replace'
-                        ? 'border-emerald-500 bg-emerald-950/20 text-white'
-                        : 'border-slate-800 bg-slate-900 text-slate-400'
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="importMode"
-                      value="replace"
-                      checked={importMode === 'replace'}
-                      onChange={() => setImportMode('replace')}
-                      className="mt-0.5 text-emerald-500"
-                    />
-                    <div>
-                      <div className="font-bold text-slate-200">Replace Database</div>
-                      <div className="text-[11px] text-slate-400">
-                        Replace current workforce with {parsedData.workers.length} workers from this Excel file
-                      </div>
-                    </div>
-                  </label>
-
                   <label
                     className={`flex items-start gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-colors ${
                       importMode === 'append'
@@ -227,35 +212,55 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                     <input
                       type="radio"
                       name="importMode"
-                      value="append"
                       checked={importMode === 'append'}
                       onChange={() => setImportMode('append')}
-                      className="mt-0.5 text-emerald-500"
+                      className="mt-0.5 accent-emerald-500"
                     />
                     <div>
                       <div className="font-bold text-slate-200">Append & Merge</div>
                       <div className="text-[11px] text-slate-400">
-                        Add newly parsed workers into existing database
+                        Add imported workers into the existing database
+                      </div>
+                    </div>
+                  </label>
+
+                  <label
+                    className={`flex items-start gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-colors ${
+                      importMode === 'replace'
+                        ? 'border-emerald-500 bg-emerald-950/20 text-white'
+                        : 'border-slate-800 bg-slate-900 text-slate-400'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="importMode"
+                      checked={importMode === 'replace'}
+                      onChange={() => setImportMode('replace')}
+                      className="mt-0.5 accent-emerald-500"
+                    />
+                    <div>
+                      <div className="font-bold text-slate-200">Replace All</div>
+                      <div className="text-[11px] text-slate-400">
+                        Removes current workers first, then imports {parsedData.workers.length}
                       </div>
                     </div>
                   </label>
                 </div>
               </div>
 
-              {/* Sample Preview Table */}
+              {/* Preview */}
               <div>
                 <div className="text-xs font-semibold text-slate-300 mb-2">
                   Sample Preview (First 8 Rows):
                 </div>
-                <div className="border border-slate-800 rounded-lg overflow-x-auto bg-slate-950 text-xs">
+                <div className="border border-slate-800 rounded-xl overflow-x-auto bg-slate-950/80 text-xs">
                   <table className="w-full text-left">
-                    <thead className="bg-slate-900 text-slate-400 text-[10px] uppercase font-semibold">
+                    <thead className="bg-slate-900 text-slate-500 text-[10px] uppercase font-semibold">
                       <tr>
                         <th className="py-2 px-3">Name</th>
                         <th className="py-2 px-3">Designation</th>
                         <th className="py-2 px-3">Company</th>
                         <th className="py-2 px-3">Sheet Source</th>
-                        <th className="py-2 px-3">Current Site</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/80">
@@ -268,8 +273,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                               {w.company}
                             </span>
                           </td>
-                          <td className="py-2 px-3 text-slate-400 text-[10px]">{w.sheetSource}</td>
-                          <td className="py-2 px-3 text-slate-400 text-[10px]">{w.currentSite || '-'}</td>
+                          <td className="py-2 px-3 text-slate-400 text-[10px]">{w.sheet_source}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -281,7 +285,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="p-4 border-t border-slate-800 bg-slate-900/90 flex items-center justify-between text-xs">
+        <div className="p-4 border-t border-slate-800 flex items-center justify-between text-xs">
           <button
             onClick={onClose}
             className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg"
@@ -292,14 +296,15 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
           {parsedData && parsedData.workers.length > 0 && (
             <button
               onClick={handleConfirmImport}
-              className="flex items-center gap-1.5 px-5 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold rounded-lg shadow-sm transition-colors"
+              disabled={isImporting}
+              className="flex items-center gap-1.5 px-5 py-2 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-60 text-slate-950 font-bold rounded-lg shadow-sm transition-colors"
             >
-              <span>Confirm & Apply {parsedData.workers.length} Workers</span>
+              <span>{isImporting ? 'Importing...' : `Confirm & Import ${parsedData.workers.length} Workers`}</span>
               <ArrowRight className="w-4 h-4" />
             </button>
           )}
         </div>
-      </div>
+      </motion.div>
     </div>
   );
 };
