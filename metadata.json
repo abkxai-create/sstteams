@@ -1,0 +1,6 @@
+{
+  "name": "ScaffoldAlloc - Scaffolding Worker Site Allocation",
+  "description": "Daily manpower site deployment, drag-and-drop worker allocation, and WhatsApp-ready deployment list for scaffolding contractors.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
